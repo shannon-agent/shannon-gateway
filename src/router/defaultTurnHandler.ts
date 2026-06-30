@@ -1,4 +1,5 @@
 import { type EngineEvent } from "../engine/types.js";
+import { newAccumulator, sendReply } from "./reply.js";
 import { type TurnContext, type TurnHandler } from "./types.js";
 
 /**
@@ -18,6 +19,9 @@ import { type TurnContext, type TurnHandler } from "./types.js";
  * engine the turn then blocks until the tool is responded to or times out.
  * Deployments that register approval-capable adapters should use the
  * approval-aware handler (P1-f) instead of, or wrapped around, this one.
+ *
+ * Reply policy (failure prefix, cancel suppression, empty-reply suppression)
+ * lives in `reply.ts` and is shared with the approval handler.
  */
 export interface DefaultTurnHandlerOptions {
   /** Prefix on the outbound message when the engine reports a failure. */
@@ -31,22 +35,20 @@ export function createDefaultTurnHandler(
   return {
     async handle(ctx: TurnContext): Promise<void> {
       const { client, adapter, replyTarget, inbound, logger } = ctx;
-      const chunks: string[] = [];
-      let failed: string | null = null;
-      let cancelled = false;
+      const acc = newAccumulator();
 
       for await (const ev of client.runQuery(inbound.text) as AsyncIterable<EngineEvent>) {
         switch (ev.type) {
           case "text":
-            chunks.push(ev.content);
+            acc.chunks.push(ev.content);
             break;
           case "completed":
             break;
           case "failed":
-            failed = ev.error;
+            acc.failed = ev.error;
             break;
           case "cancelled":
-            cancelled = true;
+            acc.cancelled = true;
             break;
           case "approval_request":
             logger.warn(
@@ -60,21 +62,7 @@ export function createDefaultTurnHandler(
         }
       }
 
-      const text = chunks.join("");
-
-      if (failed !== null) {
-        await adapter.send(replyTarget, `${failurePrefix}${failed}`);
-        return;
-      }
-      if (cancelled) {
-        // Suppress pure-cancel noise; only forward if there was partial content.
-        if (text.length > 0) await adapter.send(replyTarget, text);
-        return;
-      }
-      // completed (or stream ended without a terminal frame) — forward any text.
-      if (text.length > 0) {
-        await adapter.send(replyTarget, text);
-      }
+      await sendReply(adapter, replyTarget, acc, failurePrefix);
     },
   };
 }
