@@ -13,7 +13,15 @@
  */
 
 /** Platforms with a first-class adapter. Subprocess transports (Signal/iMessage) join later. */
-export type Platform = "slack" | "telegram" | "discord" | "whatsapp" | "matrix";
+export type Platform =
+  | "slack"
+  | "telegram"
+  | "discord"
+  | "whatsapp"
+  | "matrix"
+  | "wecom"
+  | "feishu"
+  | "dingtalk";
 
 export const PLATFORMS: readonly Platform[] = [
   "slack",
@@ -21,6 +29,9 @@ export const PLATFORMS: readonly Platform[] = [
   "discord",
   "whatsapp",
   "matrix",
+  "wecom",
+  "feishu",
+  "dingtalk",
 ];
 
 /**
