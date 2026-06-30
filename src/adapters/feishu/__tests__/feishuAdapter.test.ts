@@ -5,6 +5,7 @@ import { type AdapterConfig } from "../../../config/types.js";
 import { assertAdapterContract } from "../../contract.js";
 import {
   buildApprovalCard,
+  buildEditMessageRequest,
   buildSendRequest,
   createFeishuAdapter,
   decryptFeishuPayload,
@@ -131,6 +132,19 @@ describe("outbound builders", () => {
       msg_type: "text",
       content: JSON.stringify({ text: "hi" }),
     });
+  });
+
+  it("buildEditMessageRequest PATCHes the message with text content", () => {
+    const req = buildEditMessageRequest({
+      apiBase: "https://open.feishu.cn",
+      tenantAccessToken: "TOK",
+      messageId: "om_123",
+      msgType: "text",
+      contentJson: textContent("edited"),
+    });
+    expect(req.method).toBe("PATCH");
+    expect(req.url).toBe("https://open.feishu.cn/open-apis/im/v1/messages/om_123");
+    expect(JSON.parse(req.body)).toEqual({ msg_type: "text", content: JSON.stringify({ text: "edited" }) });
   });
 
   it("buildApprovalCard carries the choice + requestId in button values", () => {

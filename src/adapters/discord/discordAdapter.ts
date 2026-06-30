@@ -108,7 +108,7 @@ export interface CreateMessageArgs {
 
 export interface DcRequest {
   url: string;
-  method: "POST";
+  method: "POST" | "PATCH";
   headers: Record<string, string>;
   body: string;
 }
@@ -130,6 +130,25 @@ export function buildCreateMessageRequest(args: CreateMessageArgs): DcRequest {
       authorization: `Bot ${args.token}`,
     },
     body: JSON.stringify(body),
+  };
+}
+
+/** Build an edit-message PATCH request (streaming edit-in-place). Pure. */
+export function buildEditMessageRequest(args: {
+  token: string;
+  apiBaseUrl: string;
+  channelId: string;
+  messageId: string;
+  content: string;
+}): DcRequest {
+  return {
+    url: `${args.apiBaseUrl}/channels/${args.channelId}/messages/${args.messageId}`,
+    method: "PATCH",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bot ${args.token}`,
+    },
+    body: JSON.stringify({ content: args.content }),
   };
 }
 
@@ -343,6 +362,22 @@ export function createDiscordAdapter(
     return { messageId: data.id ?? "", threadId: data.channel_id };
   }
 
+  async function doEdit(
+    target: ReplyTarget,
+    content: string,
+    messageId: string,
+  ): Promise<MessageReceipt> {
+    if (!token) throw new Error("discord: start() not called or token missing");
+    const req = buildEditMessageRequest({ token, apiBaseUrl, channelId: target.chatId, messageId, content });
+    const res = await fetchImpl(req.url, { method: req.method, headers: req.headers, body: req.body });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`discord edit failed: HTTP ${res.status} ${detail}`);
+    }
+    const data = (await res.json()) as { id?: string; channel_id?: string };
+    return { messageId: data.id ?? messageId, threadId: data.channel_id, editedAt: Date.now() };
+  }
+
   return {
     platform: "discord",
     capabilities: {
@@ -385,7 +420,10 @@ export function createDiscordAdapter(
     onMessage(handler): void {
       onMessage = handler;
     },
-    async send(target, text, _opts?: SendOpts): Promise<MessageReceipt> {
+    async send(target, text, opts?: SendOpts): Promise<MessageReceipt> {
+      if (opts?.editMessageId) {
+        return await doEdit(target, text, opts.editMessageId);
+      }
       return await doSend(target, text);
     },
     async requestApproval(target, req): Promise<ApprovalDecision> {

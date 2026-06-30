@@ -115,6 +115,14 @@ export interface MxContent {
   "m.relates_to"?: { "m.in_reply_to": { event_id: string } };
 }
 
+/** Edit-in-place content: a new event whose `m.replace` relation rewrites the original. */
+export interface MxEditContent {
+  msgtype: "m.text";
+  body: string;
+  "m.new_content": { msgtype: "m.text"; body: string };
+  "m.relates_to": { rel_type: "m.replace"; event_id: string };
+}
+
 /** Build the `m.room.message` content body. Pure. */
 export function buildMessageContent(body: string, replyToEventId?: string): MxContent {
   if (replyToEventId) {
@@ -125,6 +133,16 @@ export function buildMessageContent(body: string, replyToEventId?: string): MxCo
     };
   }
   return { msgtype: "m.text", body };
+}
+
+/** Build edit content (m.replace) pointing at the original event id. Pure. */
+export function buildEditContent(originalEventId: string, body: string): MxEditContent {
+  return {
+    msgtype: "m.text",
+    body: `* ${body}`,
+    "m.new_content": { msgtype: "m.text", body },
+    "m.relates_to": { rel_type: "m.replace", event_id: originalEventId },
+  };
 }
 
 export interface MxRequest {
@@ -140,7 +158,7 @@ export function buildSendEventRequest(args: {
   accessToken: string;
   roomId: string;
   txnId: string;
-  content: MxContent;
+  content: MxContent | MxEditContent;
 }): MxRequest {
   const url =
     `${args.baseUrl}/_matrix/client/v3/rooms/${encodeURIComponent(args.roomId)}` +
@@ -284,6 +302,26 @@ export function createMatrixAdapter(
     return { messageId: data.event_id ?? txnId };
   }
 
+  async function doEdit(target: ReplyTarget, text: string, originalEventId: string): Promise<MessageReceipt> {
+    if (!token) throw new Error("matrix: start() not called or token missing");
+    txnCounter += 1;
+    const txnId = `shannon-${Date.now()}-${txnCounter}`;
+    const content = buildEditContent(originalEventId, text);
+    const req = buildSendEventRequest({
+      baseUrl,
+      accessToken: token,
+      roomId: target.chatId,
+      txnId,
+      content,
+    });
+    const res = await fetchImpl(req.url, { method: req.method, headers: req.headers, body: req.body });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`matrix edit failed: HTTP ${res.status} ${detail}`);
+    }
+    return { messageId: originalEventId, editedAt: Date.now() };
+  }
+
   return {
     platform: "matrix",
     capabilities: {
@@ -306,7 +344,10 @@ export function createMatrixAdapter(
     onMessage(handler): void {
       onMessage = handler;
     },
-    async send(target, text, _opts?: SendOpts): Promise<MessageReceipt> {
+    async send(target, text, opts?: SendOpts): Promise<MessageReceipt> {
+      if (opts?.editMessageId) {
+        return await doEdit(target, text, opts.editMessageId);
+      }
       return await doSend(target, text);
     },
     async requestApproval(target, req): Promise<ApprovalDecision> {

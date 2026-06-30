@@ -4,6 +4,7 @@ import {
   type ChannelAdapter,
   type NormalizedInbound,
   type ReplyTarget,
+  type SendOpts,
 } from "../types.js";
 import { type AdapterConfig } from "../../config/types.js";
 
@@ -104,6 +105,21 @@ export function buildSendMessageRequest(args: SendMessageArgs): HttpRequest {
     url: `${args.apiBaseUrl}/bot${args.token}/sendMessage`,
     method: "POST",
     body: JSON.stringify(body),
+  };
+}
+
+/** Build the editMessageText request (streaming edit-in-place). Pure. */
+export function buildEditMessageRequest(args: {
+  token: string;
+  apiBaseUrl: string;
+  target: ReplyTarget;
+  text: string;
+  messageId: string;
+}): HttpRequest {
+  return {
+    url: `${args.apiBaseUrl}/bot${args.token}/editMessageText`,
+    method: "POST",
+    body: JSON.stringify({ chat_id: args.target.chatId, message_id: Number(args.messageId), text: args.text }),
   };
 }
 
@@ -229,6 +245,17 @@ export function createTelegramAdapter(
     return String(data.result?.message_id ?? "");
   }
 
+  async function doEdit(target: ReplyTarget, text: string, messageId: string): Promise<void> {
+    if (!token) throw new Error("telegram: start() not called or token missing");
+    const req = buildEditMessageRequest({ token, apiBaseUrl, target, text, messageId });
+    const res = await fetchImpl(req.url, {
+      method: req.method,
+      body: req.body,
+      headers: { "content-type": "application/json" },
+    });
+    if (!res.ok) throw new Error(`telegram edit failed: HTTP ${res.status}`);
+  }
+
   return {
     platform: "telegram",
     capabilities: {
@@ -250,7 +277,11 @@ export function createTelegramAdapter(
     onMessage(handler): void {
       onMessage = handler;
     },
-    async send(target, text): Promise<{ messageId: string }> {
+    async send(target, text, opts?: SendOpts): Promise<{ messageId: string }> {
+      if (opts?.editMessageId) {
+        await doEdit(target, text, opts.editMessageId);
+        return { messageId: opts.editMessageId };
+      }
       const messageId = await doSend(target, text);
       return { messageId };
     },

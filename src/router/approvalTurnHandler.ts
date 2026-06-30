@@ -1,17 +1,18 @@
 import { type EngineEvent } from "../engine/types.js";
 import { respondToApproval } from "../engine/httpClient.js";
 import { newAccumulator, sendReply } from "./reply.js";
+import { canStream, StreamingReply } from "./streaming.js";
 import { type TurnContext, type TurnHandler } from "./types.js";
 
 /**
  * Approval-aware turn handler.
  *
- * Behaves like the default text handler, but when the engine emits an
- * `approval_request` mid-stream it renders the request in-channel via
- * `adapter.requestApproval` (blocks until the user decides), then POSTs the
- * decision to `/api/approval/respond` so the engine can resume the tool call.
- * The WS stream continues after the POST resolves the engine's pending
- * approval oneshot.
+ * Behaves like the default text handler (block OR streaming reply per adapter
+ * capability), but when the engine emits an `approval_request` mid-stream it
+ * renders the request in-channel via `adapter.requestApproval` (blocks until
+ * the user decides), then POSTs the decision to `/api/approval/respond` so the
+ * engine can resume the tool call. The WS stream continues after the POST
+ * resolves the engine's pending approval oneshot.
  *
  * If the POST fails (e.g. the engine already timed the request out to Deny at
  * 300s), the turn is not aborted — the failure is logged and the engine will
@@ -21,6 +22,8 @@ export interface ApprovalTurnHandlerOptions {
   /** Engine HTTP base URL, e.g. `http://127.0.0.1:33420`. */
   engineBaseUrl: string;
   failurePrefix?: string;
+  /** Min ms between streaming progress edits (default 1500). */
+  streamThrottleMs?: number;
   /** Override for tests; defaults to the global fetch. */
   fetchImpl?: typeof fetch;
 }
@@ -33,11 +36,18 @@ export function createApprovalTurnHandler(
     async handle(ctx: TurnContext): Promise<void> {
       const { client, adapter, replyTarget, inbound, logger } = ctx;
       const acc = newAccumulator();
+      const stream = canStream(adapter)
+        ? new StreamingReply(adapter, replyTarget, {
+            failurePrefix,
+            throttleMs: opts.streamThrottleMs ?? adapter.capabilities.progressThrottleMs,
+          })
+        : null;
 
       for await (const ev of client.runQuery(inbound.text) as AsyncIterable<EngineEvent>) {
         switch (ev.type) {
           case "text":
-            acc.chunks.push(ev.content);
+            if (stream) await stream.ingestText(ev.content);
+            else acc.chunks.push(ev.content);
             break;
           case "approval_request": {
             // Engine event fields are snake_case (wire); map to the gateway's
@@ -78,7 +88,11 @@ export function createApprovalTurnHandler(
         }
       }
 
-      await sendReply(adapter, replyTarget, acc, failurePrefix);
+      if (stream) {
+        await stream.finalize({ failed: acc.failed, cancelled: acc.cancelled });
+      } else {
+        await sendReply(adapter, replyTarget, acc, failurePrefix);
+      }
     },
   };
 }

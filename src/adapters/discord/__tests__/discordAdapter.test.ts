@@ -6,6 +6,7 @@ import { assertAdapterContract } from "../../contract.js";
 import {
   buildApprovalComponents,
   buildCreateMessageRequest,
+  buildEditMessageRequest,
   createDiscordAdapter,
   formatApprovalPrompt,
   normalizeDiscordMessage,
@@ -111,6 +112,22 @@ describe("buildCreateMessageRequest", () => {
   it("merges components (approval buttons)", () => {
     const req = buildCreateMessageRequest({ ...args, components: [{ type: 1 }] });
     expect(JSON.parse(req.body)).toMatchObject({ components: [{ type: 1 }] });
+  });
+});
+
+describe("buildEditMessageRequest", () => {
+  it("PATCHes the channel message with content + Bot auth", () => {
+    const req = buildEditMessageRequest({
+      token: "BOT_TOKEN",
+      apiBaseUrl: "https://discord.com/api/v10",
+      channelId: "456",
+      messageId: "789",
+      content: "edited",
+    });
+    expect(req.method).toBe("PATCH");
+    expect(req.url).toBe("https://discord.com/api/v10/channels/456/messages/789");
+    expect(req.headers.authorization).toBe("Bot BOT_TOKEN");
+    expect(JSON.parse(req.body)).toEqual({ content: "edited" });
   });
 });
 

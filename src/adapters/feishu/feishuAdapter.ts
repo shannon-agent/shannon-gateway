@@ -159,7 +159,7 @@ export interface FeishuSendArgs {
 
 export interface FeishuRequest {
   url: string;
-  method: "POST";
+  method: "POST" | "PATCH";
   headers: Record<string, string>;
   body: string;
 }
@@ -177,6 +177,25 @@ export function buildSendRequest(args: FeishuSendArgs): FeishuRequest {
       msg_type: args.msgType,
       content: args.contentJson,
     }),
+  };
+}
+
+/** Build a PATCH message-update request (streaming edit-in-place). Pure. */
+export function buildEditMessageRequest(args: {
+  apiBase: string;
+  tenantAccessToken: string;
+  messageId: string;
+  msgType: "text" | "interactive";
+  contentJson: string;
+}): FeishuRequest {
+  return {
+    url: `${args.apiBase}/open-apis/im/v1/messages/${encodeURIComponent(args.messageId)}`,
+    method: "PATCH",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${args.tenantAccessToken}`,
+    },
+    body: JSON.stringify({ msg_type: args.msgType, content: args.contentJson }),
   };
 }
 
@@ -385,6 +404,27 @@ export function createFeishuAdapter(cfg: AdapterConfig, ctx: AdapterContext): Ch
     return { messageId: data.data?.message_id ?? "" };
   }
 
+  async function doEdit(
+    _target: ReplyTarget,
+    text: string,
+    messageId: string,
+  ): Promise<MessageReceipt> {
+    const token = await ensureTenantToken();
+    const req = buildEditMessageRequest({
+      apiBase,
+      tenantAccessToken: token,
+      messageId,
+      msgType: "text",
+      contentJson: textContent(text),
+    });
+    const res = await fetchImpl(req.url, { method: req.method, headers: req.headers, body: req.body });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`feishu edit failed: HTTP ${res.status} ${detail}`);
+    }
+    return { messageId, editedAt: Date.now() };
+  }
+
   return {
     platform: "feishu",
     capabilities: {
@@ -427,7 +467,10 @@ export function createFeishuAdapter(cfg: AdapterConfig, ctx: AdapterContext): Ch
     onMessage(handler): void {
       onMessage = handler;
     },
-    async send(target, text, _opts?: SendOpts): Promise<MessageReceipt> {
+    async send(target, text, opts?: SendOpts): Promise<MessageReceipt> {
+      if (opts?.editMessageId) {
+        return await doEdit(target, text, opts.editMessageId);
+      }
       return await doSend(target, "text", textContent(text));
     },
     async requestApproval(target, req): Promise<ApprovalDecision> {

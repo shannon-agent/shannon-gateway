@@ -4,6 +4,7 @@ import { type Logger } from "../../types.js";
 import { type AdapterConfig } from "../../../config/types.js";
 import { assertAdapterContract } from "../../contract.js";
 import {
+  buildEditContent,
   buildMessageContent,
   buildSendEventRequest,
   createMatrixAdapter,
@@ -109,6 +110,15 @@ describe("buildMessageContent", () => {
   it("adds m.in_reply_to when replying", () => {
     const c = buildMessageContent("hi", "$orig");
     expect(c["m.relates_to"]).toEqual({ "m.in_reply_to": { event_id: "$orig" } });
+  });
+});
+
+describe("buildEditContent", () => {
+  it("builds an m.replace relation pointing at the original event", () => {
+    const c = buildEditContent("$orig", "updated");
+    expect(c.body).toBe("* updated");
+    expect(c["m.relates_to"]).toEqual({ rel_type: "m.replace", event_id: "$orig" });
+    expect(c["m.new_content"]).toEqual({ msgtype: "m.text", body: "updated" });
   });
 });
 

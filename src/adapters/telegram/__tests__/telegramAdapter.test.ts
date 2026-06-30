@@ -5,6 +5,7 @@ import { type AdapterConfig } from "../../../config/types.js";
 import { assertAdapterContract } from "../../contract.js";
 import {
   buildApprovalKeyboard,
+  buildEditMessageRequest,
   buildSendMessageRequest,
   createTelegramAdapter,
   formatApprovalPrompt,
@@ -109,6 +110,20 @@ describe("buildSendMessageRequest", () => {
   it("merges extra fields (e.g. reply_markup)", () => {
     const req = buildSendMessageRequest({ ...args, extra: { reply_markup: { x: 1 } } });
     expect(JSON.parse(req.body)).toMatchObject({ reply_markup: { x: 1 } });
+  });
+});
+
+describe("buildEditMessageRequest", () => {
+  it("targets editMessageText with chat_id + message_id + text", () => {
+    const req = buildEditMessageRequest({
+      token: "TOKEN",
+      apiBaseUrl: "https://api.telegram.org",
+      target: { platform: "telegram", chatId: "123" },
+      text: "updated",
+      messageId: "9001",
+    });
+    expect(req.url).toBe("https://api.telegram.org/botTOKEN/editMessageText");
+    expect(JSON.parse(req.body)).toEqual({ chat_id: "123", message_id: 9001, text: "updated" });
   });
 });
 
