@@ -91,6 +91,8 @@ export interface NormalizedInbound {
   media?: MediaAttachment[];
   /** Epoch ms. */
   timestamp: number;
+  /** True for a 1:1 direct message (eligible for DM pairing); false/absent for group channels. */
+  isDirect?: boolean;
   /** The platform-native event, for adapter-specific fallback. */
   raw?: unknown;
 }
