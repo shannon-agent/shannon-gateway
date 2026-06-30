@@ -43,6 +43,28 @@ pnpm test        # vitest
 pnpm dev         # tsx src/index.ts  (or: pnpm dev -- --config path/to/config.json)
 ```
 
+### Single binary (distribution)
+
+Compile a self-contained executable (embeds the Bun runtime + bundled `ws`; no
+Node install needed on the target host):
+
+```bash
+pnpm build:binary          # → dist/shannon-gateway
+./dist/shannon-gateway --config path/to/config.json
+```
+
+Cross-compile for another target with Bun's `--target` (triplet:
+`<bun-version>-<os>-<arch>`):
+
+```bash
+bun build --compile --target=bun-darwin-arm64 --outfile=dist/shannon-gateway-darwin-arm64 src/index.ts
+bun build --compile --target=bun-windows-x64  --outfile=dist/shannon-gateway-windows-x64.exe  src/index.ts
+```
+
+The config + keyring are read at runtime exactly as in `pnpm dev` — only the
+runtime is embedded, never secrets. CI (`binary` job) compiles + smoke-tests
+each PR so bundle regressions surface before merge.
+
 ### Configuration
 
 Default path: `~/.shannon/gateway/config.json`. Override with

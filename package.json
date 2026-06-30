@@ -10,6 +10,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc",
+    "build:binary": "bun build --compile --outfile=dist/shannon-gateway src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "tsx src/index.ts"

@@ -21,3 +21,30 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+
+  binary:
+    name: Single-binary build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+      - name: Compile single-binary
+        run: pnpm build:binary
+      - name: Verify binary boots
+        # Positive smoke: a valid minimal config (no adapters) must reach
+        # bootstrap and print the "up" line. Proves the bun --compile bundle is
+        # functional end-to-end (entry guard survives compilation).
+        run: |
+          printf '%s' '{"engine":{"wsUrl":"ws://127.0.0.1:9999/ws","httpBaseUrl":"http://127.0.0.1:9999"},"adapters":[]}' > /tmp/gw.json
+          out=$(./dist/shannon-gateway --config /tmp/gw.json 2>&1)
+          echo "$out"
+          echo "$out" | grep -q "shannon-gateway up:"
