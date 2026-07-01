@@ -45,11 +45,37 @@ pnpm dev         # tsx src/index.ts  (or: pnpm dev -- --config path/to/config.js
 
 ### Single binary (distribution)
 
-Compile a self-contained executable (embeds the Bun runtime + bundled `ws`; no
-Node install needed on the target host):
+The gateway ships as a self-contained executable (embeds the Bun runtime +
+bundled `ws`; no Node install needed on the target host).
+
+#### Download a prebuilt binary
+
+Every `v*` tag triggers the [Release workflow](.github/workflows/release.yml),
+which cross-compiles four targets and attaches them to the corresponding
+[GitHub Release](https://github.com/shannon-agent/shannon-gateway/releases):
+
+| Asset | Target |
+|---|---|
+| `shannon-gateway-linux-x64` | Linux x86_64 |
+| `shannon-gateway-darwin-x64` | macOS Intel |
+| `shannon-gateway-darwin-arm64` | macOS Apple Silicon |
+| `shannon-gateway-windows-x64.exe` | Windows x86_64 |
 
 ```bash
-pnpm build:binary          # → dist/shannon-gateway
+# Example: latest Apple Silicon macOS build
+curl -L -o shannon-gateway https://github.com/shannon-agent/shannon-gateway/releases/latest/download/shannon-gateway-darwin-arm64
+chmod +x shannon-gateway
+./shannon-gateway --config path/to/config.json
+```
+
+The linux-x64 build is smoke-tested (boots to the `shannon-gateway up:` line)
+before the release is published; the other three targets are byte-compiled
+from the same source via Bun `--target` cross-compilation.
+
+#### Build from source
+
+```bash
+pnpm build:binary          # → dist/shannon-gateway (host target)
 ./dist/shannon-gateway --config path/to/config.json
 ```
 
@@ -206,8 +232,9 @@ in the repo). See `src/adapters/__tests__/` and the mock-adapter pattern in
 - **Bootstrap** (#8): config loader, secret providers, runnable entry — done.
 - **Adapters**: platform implementations + real-credential smoke in progress
   (P1-g Slack, T6 Telegram/Discord/Matrix/WhatsApp/WeCom/Feishu/DingTalk).
-- **Phase 2**: streaming (edit-in-place) replies; single-binary packaging for
-  desktop distribution — planned.
+- **Phase 2**: streaming (edit-in-place) replies — done; single-binary
+  packaging for desktop distribution — done (Release workflow cross-compiles
+  linux/macOS/Windows binaries on every `v*` tag).
 
 ## Security
 

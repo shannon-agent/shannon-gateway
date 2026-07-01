@@ -1,0 +1,85 @@
+name: Release
+
+# Cross-compiles a self-contained `shannon-gateway` binary for four targets on
+# every `v*` tag push and publishes them to a GitHub Release. Bun `--compile`
+# cross-compiles from a single Linux runner (no per-OS runners needed), so the
+# whole matrix runs in parallel and finishes in one fast job fan-out.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # softprops/action-gh-release creates the release + uploads assets
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: bun-linux-x64
+            artifact: shannon-gateway-linux-x64
+          - target: bun-darwin-x64
+            artifact: shannon-gateway-darwin-x64
+          - target: bun-darwin-arm64
+            artifact: shannon-gateway-darwin-arm64
+          - target: bun-windows-x64
+            artifact: shannon-gateway-windows-x64.exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+      - name: Compile (${{ matrix.target }})
+        run: bun build --compile --target=${{ matrix.target }} --outfile=dist/${{ matrix.artifact }} src/index.ts
+      # Only the host-matching binary (linux-x64) can run on this runner; the
+      # others are foreign arch/OS and are only byte-compiled + uploaded.
+      - name: Smoke-test (linux-x64 only)
+        if: matrix.target == 'bun-linux-x64'
+        run: |
+          printf '%s' '{"engine":{"wsUrl":"ws://127.0.0.1:9999/ws","httpBaseUrl":"http://127.0.0.1:9999"},"adapters":[]}' > /tmp/gw.json
+          out=$(./dist/${{ matrix.artifact }} --config /tmp/gw.json 2>&1)
+          echo "$out"
+          echo "$out" | grep -q "shannon-gateway up:"
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: binaries
+          merge-multiple: true
+      - name: Make non-Windows binaries executable
+        run: chmod +x binaries/shannon-gateway-linux-x64 binaries/shannon-gateway-darwin-*
+      - name: Create release with assets
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            binaries/shannon-gateway-linux-x64
+            binaries/shannon-gateway-darwin-x64
+            binaries/shannon-gateway-darwin-arm64
+            binaries/shannon-gateway-windows-x64.exe
