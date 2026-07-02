@@ -84,6 +84,38 @@ describe("validateConfig", () => {
       }),
     ).toThrow(/logLevel/);
   });
+
+  it("accepts a valid optional mobile section", () => {
+    const cfg = validateConfig({
+      ...ok,
+      mobile: {
+        enabled: true,
+        host: "127.0.0.1",
+        port: 33430,
+        tokensFile: "/tmp/tokens.jsonl",
+        devicesFile: "/tmp/devices.json",
+      },
+    });
+    expect(cfg.mobile).toEqual({
+      enabled: true,
+      host: "127.0.0.1",
+      port: 33430,
+      tokensFile: "/tmp/tokens.jsonl",
+      devicesFile: "/tmp/devices.json",
+    });
+  });
+
+  it("rejects mobile that is not an object", () => {
+    expect(() => validateConfig({ ...ok, mobile: "on" })).toThrow(/mobile.*object/);
+  });
+
+  it("rejects a non-boolean mobile.enabled", () => {
+    expect(() => validateConfig({ ...ok, mobile: { enabled: "yes" } })).toThrow(/mobile\.enabled/);
+  });
+
+  it("rejects an out-of-range mobile.port", () => {
+    expect(() => validateConfig({ ...ok, mobile: { port: 99999 } })).toThrow(/mobile\.port/);
+  });
 });
 
 describe("loadConfig", () => {

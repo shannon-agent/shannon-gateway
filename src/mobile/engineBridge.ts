@@ -27,6 +27,7 @@ import { respondToApproval, type GatewayApprovalChoice } from "../engine/httpCli
 import { EngineWsClient, type EngineWsClientOptions } from "../engine/wsClient.js";
 import type { EngineEvent } from "../engine/types.js";
 import type { Logger } from "../adapters/types.js";
+import { approvalMessage } from "./crypto.js";
 import {
   ShannonError,
   type AgentListResult,
@@ -38,7 +39,7 @@ import {
   type QueryParams,
   type ShannonEvent,
 } from "./protocol.js";
-import type { MethodHandlers } from "./server.js";
+import type { MethodContext, MethodHandlers } from "./server.js";
 
 /**
  * The engine-client surface this bridge consumes. `EngineWsClient` satisfies it;
@@ -57,6 +58,17 @@ export interface EngineClient {
 
 export type EngineClientFactory = (opts: EngineWsClientOptions) => EngineClient;
 
+/**
+ * Verifies a device signature. Backed by the DeviceRegistry in production (P1.2
+ * composer wires it via `createRegistryVerifier`); tests inject a fake. Kept as a
+ * plain callback so the bridge has no compile-time dependency on the pairing module.
+ */
+export type DeviceSignatureVerifier = (
+  deviceId: string,
+  message: string,
+  signature: string,
+) => boolean;
+
 export interface EngineBridgeOptions {
   /** Engine WS URL, e.g. `ws://127.0.0.1:33420/api/ws`. */
   engineWsUrl: string;
@@ -71,6 +83,15 @@ export interface EngineBridgeOptions {
   engineClientFactory?: EngineClientFactory;
   /** Test seam for the health probe + approval POST (defaults to global fetch). */
   fetchImpl?: typeof fetch;
+  /**
+   * P1.2 access gate: when true, query/cancel/approval require a bound device
+   * session (ctx.sessionId set by shannon/pair or shannon/device.resume) and
+   * every approval decision must carry a valid Ed25519 signature. Default false
+   * so P1.1b's open-by-default tests stay green; the live gateway enables it.
+   */
+  requireSession?: boolean;
+  /** Registry-backed signature verifier; required for approval signing when requireSession is on. */
+  verifyDeviceSignature?: DeviceSignatureVerifier;
 }
 
 /** Sentinel key for queries without a session_id (P1.2 replaces it with a device id). */
@@ -90,9 +111,24 @@ export function createEngineHandlers(opts: EngineBridgeOptions): MethodHandlers 
   const activeQueries = new Map<string, EngineClient>();
   let modelOverride: string | null = null;
 
+  const requireSession = opts.requireSession === true;
+  /** P1.2 gate: null = proceed; otherwise return this error outcome. */
+  const sessionGate = (
+    ctx: MethodContext,
+  ): { kind: "error"; code: number; message: string } | null =>
+    requireSession && ctx.sessionId == null
+      ? {
+          kind: "error",
+          code: ShannonError.PAIRING_REQUIRED,
+          message: "pair a device first (shannon/pair or shannon/device.resume)",
+        }
+      : null;
+
   return {
     // ── streaming query ───────────────────────────────────────────────────
-    "shannon/query": async (raw) => {
+    "shannon/query": async (raw, ctx) => {
+      const gate = sessionGate(ctx);
+      if (gate) return gate;
       const params = (raw ?? {}) as Partial<QueryParams>;
       if (typeof params.prompt !== "string" || params.prompt.trim().length === 0) {
         return {
@@ -144,7 +180,9 @@ export function createEngineHandlers(opts: EngineBridgeOptions): MethodHandlers 
     },
 
     // ── cancel ────────────────────────────────────────────────────────────
-    "shannon/cancel": async (raw) => {
+    "shannon/cancel": async (raw, ctx) => {
+      const gate = sessionGate(ctx);
+      if (gate) return gate;
       const params = (raw ?? {}) as Partial<CancelParams>;
       const key = params.session_id ?? ANON_KEY;
       const client = activeQueries.get(key);
@@ -159,7 +197,9 @@ export function createEngineHandlers(opts: EngineBridgeOptions): MethodHandlers 
     },
 
     // ── approval decision ─────────────────────────────────────────────────
-    "shannon/approval/decide": async (raw) => {
+    "shannon/approval/decide": async (raw, ctx) => {
+      const gate = sessionGate(ctx);
+      if (gate) return gate;
       const params = (raw ?? {}) as Partial<ApprovalDecideParams>;
       if (typeof params.request_id !== "string" || params.request_id.length === 0) {
         return {
@@ -175,13 +215,26 @@ export function createEngineHandlers(opts: EngineBridgeOptions): MethodHandlers 
           message: 'params.choice must be "allow" or "deny"',
         };
       }
-      // P1.2 verifies the Ed25519 signature over {request_id, choice} here and
-      // rejects unsigned decisions. P1.1b trusts the gateway's local socket —
-      // the server is not network-exposed until P1.2 pairing is in place.
-      if (!params.signature) {
-        opts.logger.warn(
-          "shannon/approval/decide: missing signature (P1.2 will enforce Ed25519)",
-        );
+      // P1.2: every approval decision MUST be signed by the bound device over
+      // `${request_id}:${choice}`. Unsigned or invalid signatures are rejected
+      // before the engine is touched, so a stolen/ungated connection can't
+      // auto-approve a destructive tool.
+      if (requireSession) {
+        const sig = typeof params.signature === "string" ? params.signature : "";
+        const deviceId = ctx.sessionId as string;
+        const ok =
+          sig.length > 0 &&
+          (opts.verifyDeviceSignature?.(deviceId, approvalMessage(params.request_id, params.choice), sig) ?? false);
+        if (!ok) {
+          return {
+            kind: "error",
+            code: ShannonError.BAD_PARAMS,
+            message: "invalid or missing approval signature",
+          };
+        }
+      } else if (!params.signature) {
+        // requireSession off (e.g. P1.1b open mode) — still warn so the gap is visible.
+        opts.logger.warn("shannon/approval/decide: missing signature (requireSession is off)");
       }
       try {
         await respondToApproval({

@@ -104,5 +104,48 @@ export function validateConfig(parsed: unknown, path = "<inline>"): GatewayConfi
   const result: GatewayConfig = { engine: { wsUrl: e.wsUrl, httpBaseUrl: e.httpBaseUrl }, adapters };
   if (typeof e.model === "string" && e.model.length > 0) result.engine.model = e.model;
   if (typeof logLevel === "string") result.logLevel = logLevel as LogLevel;
+
+  // Optional inbound mobile `shannon/*` server (P1.3). Validates shape only;
+  // defaults (host/port/file paths) are resolved in bootstrap.
+  const mobile = obj.mobile;
+  if (mobile !== undefined) {
+    if (typeof mobile !== "object" || mobile === null) {
+      throw new Error(`gateway config ${path}: "mobile" must be an object`);
+    }
+    const m = mobile as Record<string, unknown>;
+    const parsedMobile: GatewayConfig["mobile"] = {};
+    if (m.enabled !== undefined) {
+      if (typeof m.enabled !== "boolean") {
+        throw new Error(`gateway config ${path}: mobile.enabled must be boolean`);
+      }
+      parsedMobile.enabled = m.enabled;
+    }
+    if (m.host !== undefined) {
+      if (typeof m.host !== "string" || m.host.length === 0) {
+        throw new Error(`gateway config ${path}: mobile.host must be a non-empty string`);
+      }
+      parsedMobile.host = m.host;
+    }
+    if (m.port !== undefined) {
+      if (typeof m.port !== "number" || !Number.isInteger(m.port) || m.port < 0 || m.port > 65535) {
+        throw new Error(`gateway config ${path}: mobile.port must be an integer in 0..65535`);
+      }
+      parsedMobile.port = m.port;
+    }
+    if (m.tokensFile !== undefined) {
+      if (typeof m.tokensFile !== "string" || m.tokensFile.length === 0) {
+        throw new Error(`gateway config ${path}: mobile.tokensFile must be a non-empty string`);
+      }
+      parsedMobile.tokensFile = m.tokensFile;
+    }
+    if (m.devicesFile !== undefined) {
+      if (typeof m.devicesFile !== "string" || m.devicesFile.length === 0) {
+        throw new Error(`gateway config ${path}: mobile.devicesFile must be a non-empty string`);
+      }
+      parsedMobile.devicesFile = m.devicesFile;
+    }
+    result.mobile = parsedMobile;
+  }
+
   return result;
 }

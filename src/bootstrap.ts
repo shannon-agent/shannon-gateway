@@ -1,3 +1,6 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import { type AdapterContext, type ChannelAdapter, type Logger } from "./adapters/types.js";
 import { AdapterRegistry } from "./adapters/registry.js";
 import { EngineWsClient } from "./engine/wsClient.js";
@@ -10,6 +13,14 @@ import { createEnvSecretProvider } from "./secrets/envProvider.js";
 import { createCliKeyringProvider } from "./secrets/cliKeyring.js";
 import { createChainedSecretProvider } from "./secrets/chain.js";
 import { createConsoleLogger } from "./logger.js";
+import { GATEWAY_VERSION } from "./version.js";
+import { MobileServer } from "./mobile/server.js";
+import {
+  createMobileHandlers,
+  DeviceRegistry,
+  PairTokenStore,
+} from "./mobile/pairing.js";
+import type { EngineClientFactory as MobileEngineClientFactory } from "./mobile/engineBridge.js";
 
 /**
  * Turns an `AdapterConfig` + secret-backed `AdapterContext` into a live
@@ -33,13 +44,22 @@ export interface BootstrapOptions {
   secretProvider?: SecretProvider;
   /** Override the logger (default: console, level from config.logLevel). */
   logger?: Logger;
+  /**
+   * Mobile server test seams (only used when `config.mobile.enabled`). The
+   * engine-client factory lets tests stub the query stream; `fetchImpl` stubs
+   * the engine health/approval HTTP calls. Both optional in production.
+   */
+  mobileEngineClientFactory?: MobileEngineClientFactory;
+  mobileFetchImpl?: typeof fetch;
 }
 
 export interface BootstrapHandle {
-  /** Stop adapters + router lanes. Idempotent. */
+  /** Stop adapters + router lanes + mobile server. Idempotent. */
   stop(): Promise<void>;
   /** Number of adapters that started (diagnostics / tests). */
   readonly adapterCount: number;
+  /** Bound mobile server port, or `null` when the mobile server is disabled. */
+  readonly mobilePort: number | null;
 }
 
 /**
@@ -104,19 +124,74 @@ export async function bootstrap(
   await registry.startAll(ctx);
   logger.info(`shannon-gateway up: ${registry.size} adapter(s) started`);
 
+  const mobile = config.mobile?.enabled
+    ? await startMobileServer(config, logger, opts)
+    : null;
+  if (mobile) {
+    logger.info(
+      `mobile shannon/* server listening on ${config.mobile?.host ?? "127.0.0.1"}:${mobile.port}`,
+    );
+  }
+
   let stopped = false;
   return {
     get adapterCount(): number {
       return registry.size;
     },
+    get mobilePort(): number | null {
+      return mobile?.port ?? null;
+    },
     async stop(): Promise<void> {
       if (stopped) return;
       stopped = true;
+      await mobile?.handle.stop().catch(() => {});
       await router.stop();
       await registry.stopAll();
       logger.info("shannon-gateway stopped");
     },
   };
+}
+
+/**
+ * Start the inbound mobile `shannon/*` server (Option B adapter, P1.1–P1.3).
+ *
+ * Design D control channel: pairing state is shared via files — the desktop
+ * appends one-time tokens to `tokensFile` (consumed here on `shannon/pair`) and
+ * both processes read/write the device registry at `devicesFile`. The engine
+ * bridge enforces `requireSession` (query/cancel/approval are gated behind a
+ * paired device) and mandates an Ed25519 signature on every approval decision.
+ */
+async function startMobileServer(
+  config: GatewayConfig,
+  logger: Logger,
+  opts: BootstrapOptions,
+): Promise<{ handle: { stop(): Promise<void> }; port: number }> {
+  const mobileCfg = config.mobile!;
+  const host = mobileCfg.host ?? "127.0.0.1";
+  const port = mobileCfg.port ?? 33430;
+  const tokensFile = mobileCfg.tokensFile ?? join(homedir(), ".shannon", "mobile-pair-tokens.jsonl");
+  const devicesFile = mobileCfg.devicesFile ?? join(homedir(), ".shannon", "mobile-devices.json");
+
+  const tokens = new PairTokenStore({ filePath: tokensFile });
+  const registry = new DeviceRegistry({ filePath: devicesFile });
+  const handlers = createMobileHandlers({
+    engine: {
+      engineWsUrl: config.engine.wsUrl,
+      engineHttpBaseUrl: config.engine.httpBaseUrl,
+      defaultModel: config.engine.model ?? null,
+      version: GATEWAY_VERSION,
+      logger,
+      engineClientFactory: opts.mobileEngineClientFactory,
+      fetchImpl: opts.mobileFetchImpl,
+    },
+    tokens,
+    registry,
+    logger,
+  });
+
+  const server = new MobileServer({ host, port, logger, handlers });
+  const handle = await server.start();
+  return { handle, port: handle.port };
 }
 
 function createEngineClient(config: GatewayConfig, sessionKey: string): EngineWsClient {

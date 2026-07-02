@@ -71,6 +71,37 @@ export interface AgentDetailParams {
   subscribe?: boolean;
 }
 
+/**
+ * `shannon/pair` — register a device key by consuming a one-time pairToken.
+ * The phone generates its own Ed25519 keypair, then proves possession of the
+ * private key with `pop_signature` over `${pair_token}:${device_public_key}`
+ * (see mobile/crypto.ts). On success the gateway registers the device and binds
+ * the connection's session.
+ */
+export interface PairParams {
+  pair_token: string;
+  /** JWK `x` — base64url of the 32-byte Ed25519 public key. */
+  device_public_key: string;
+  /** Ed25519 signature over `${pair_token}:${device_public_key}`. */
+  pop_signature: string;
+  /** Optional human-friendly label (device name) for the paired-devices UI. */
+  device_label?: string | null;
+}
+
+/**
+ * `shannon/device.resume` — a previously-paired device reconnects and proves
+ * identity by signing `${device_id}:${timestamp}`. The timestamp bounds replay
+ * (rejected outside ±clock-skew, default 60s). On success the connection's
+ * session is rebound to the device (Z1 continuity).
+ */
+export interface DeviceResumeParams {
+  device_id: string;
+  /** Epoch milliseconds; must be within the gateway's clock-skew window. */
+  timestamp: number;
+  /** Ed25519 signature over `${device_id}:${timestamp}`. */
+  signature: string;
+}
+
 // ── Responses (gateway → phone) ──────────────────────────────────────────
 
 export interface JsonRpcSuccess<R> {
@@ -144,6 +175,16 @@ export interface ModelListResult {
 
 export interface AgentListResult {
   agents: { session_id: string; platform: string; active: boolean }[];
+}
+
+/** `shannon/pair` / `shannon/device.resume` success — the connection is now bound. */
+export interface DeviceSessionResult {
+  /** The gateway's device id for this key (deterministic from the public key). */
+  device_id: string;
+  /** Bound per-connection session id; pass to subsequent methods as session_id. */
+  session_id: string;
+  /** Human-friendly label echoed back (pair only). */
+  device_label?: string | null;
 }
 
 export interface OkResult {

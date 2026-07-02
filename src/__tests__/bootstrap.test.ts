@@ -1,3 +1,8 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { WebSocket } from "ws";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -160,6 +165,70 @@ describe("bootstrap", () => {
     expect(seen[0]?.getSecret).toBeTypeOf("function");
     expect(await seen[0]?.getSecret("slack/bot-token")).toBe("tok");
     expect(await seen[0]?.getSecret("missing/key")).toBeNull();
+    await handle.stop();
+  });
+
+  it("starts the mobile shannon/* server when config.mobile.enabled and stops it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gw-mobile-"));
+    const cfg: GatewayConfig = {
+      engine: { wsUrl: "ws://m/ws", httpBaseUrl: "http://m" },
+      adapters: [],
+      mobile: {
+        enabled: true,
+        host: "127.0.0.1",
+        port: 0,
+        tokensFile: join(dir, "tokens.jsonl"),
+        devicesFile: join(dir, "devices.json"),
+      },
+    };
+    // Health probe uses HTTP; stub it so no real engine is required.
+    const fetchMock = vi.fn(async () => ({ status: 200, ok: true }) as unknown as Response);
+    const handle = await bootstrap(cfg, {
+      factories: new Map(),
+      logger: noopLogger,
+      mobileFetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    const port = handle.mobilePort;
+    expect(typeof port).toBe("number");
+    expect((port ?? 0) > 0).toBe(true);
+
+    // A real WS client can connect and call shannon/health (no pairing needed).
+    const healthRes = await new Promise<any>((resolve, reject) => {
+      const socket = new WebSocket(`ws://127.0.0.1:${port}/`);
+      socket.on("open", () => {
+        socket.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "shannon/health" }));
+      });
+      socket.on("message", (d) => {
+        const msg = JSON.parse(String(d));
+        if (msg.id === 1) {
+          socket.close();
+          resolve(msg);
+        }
+      });
+      socket.on("error", reject);
+    });
+    expect(healthRes.result).toMatchObject({ gateway: "ok", engine: "ok" });
+    expect(typeof healthRes.result.version).toBe("string");
+
+    await handle.stop();
+    // After stop, new connections are refused.
+    await expect(
+      new Promise<void>((resolve, reject) => {
+        const s = new WebSocket(`ws://127.0.0.1:${port}/`);
+        s.once("open", () => resolve());
+        s.once("error", () => reject(new Error("expected refusal")));
+      }),
+    ).rejects.toThrow(/expected refusal/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("leaves mobilePort null when mobile is not enabled", async () => {
+    const handle = await bootstrap(
+      { engine: { wsUrl: "ws://m/ws", httpBaseUrl: "http://m" }, adapters: [] },
+      { factories: new Map(), logger: noopLogger },
+    );
+    expect(handle.mobilePort).toBeNull();
     await handle.stop();
   });
 });

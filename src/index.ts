@@ -23,7 +23,7 @@ import { createWeComAdapter } from "./adapters/wecom/wecomAdapter.js";
 import { createFeishuAdapter } from "./adapters/feishu/feishuAdapter.js";
 import { createDingTalkAdapter } from "./adapters/dingtalk/dingtalkAdapter.js";
 
-export const GATEWAY_VERSION = "0.1.0";
+export { GATEWAY_VERSION } from "./version.js";
 
 /** Platform id → factory. One adapter per platform; the router looks up by id. */
 const factories = new Map<string, AdapterFactory>([

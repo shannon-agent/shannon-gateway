@@ -39,6 +39,33 @@ export interface GatewayConfig {
   adapters: AdapterConfig[];
   /** Log level. Default "info". */
   logLevel?: LogLevel;
+  /**
+   * Inbound mobile `shannon/*` server (Option B mobile adapter). Optional and
+   * off by default; the desktop enables it in the gateway config it writes.
+   * P1.3 (Design D): pairing state is shared via files — the desktop appends
+   * one-time pair tokens to `mobile.tokensFile` and both sides read/write the
+   * device registry at `mobile.devicesFile`.
+   */
+  mobile?: MobileGatewayConfig;
+}
+
+export interface MobileGatewayConfig {
+  /** Enable the inbound mobile `shannon/*` WS server. Default false. */
+  enabled?: boolean;
+  /** Bind host. Default "127.0.0.1" — must not widen before pairing is live. */
+  host?: string;
+  /** Bind port. Default 33430. */
+  port?: number;
+  /**
+   * PairTokenStore JSONL path (desktop appends; gateway consumes). Default
+   * `~/.shannon/mobile-pair-tokens.jsonl`.
+   */
+  tokensFile?: string;
+  /**
+   * DeviceRegistry JSON path (gateway writes on pair; desktop reads/revoke).
+   * Default `~/.shannon/mobile-devices.json`.
+   */
+  devicesFile?: string;
 }
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
